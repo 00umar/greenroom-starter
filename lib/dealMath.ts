@@ -1,31 +1,26 @@
 /**
  * Deal calculation logic for the in-app settlement tool.
  *
- * IMPORTANT — DELIBERATELY INCOMPLETE.
- *
- * This is the existing Greenroom settlement engine. It was built early in
- * the company's life, when most deals were flat guarantees. It currently
- * handles two deal types end-to-end:
+ * Handles four deal types end-to-end:
  *
  *   1. flat                 — $X guaranteed, optional sellout bonus
  *   2. percentage_of_gross  — X% of gross, no expense deductions, optional sellout bonus
+ *   3. percentage_of_net    — X% of (gross − fees − expenses), optional sellout bonus
+ *   4. vs                   — max(guarantee, X% of net), optional sellout bonus
  *
- * For both, it reads `bonusesJson` and applies bonuses where it can — but
+ * For all four, it reads `bonusesJson` and applies bonuses where it can — but
  * only the structured ones. Bonuses that exist only in `dealNotesFreetext`
  * are invisible to this engine.
  *
  * It does NOT handle:
  *
- *   - vs deals (guarantee vs % of net, whichever greater)
- *   - percentage_of_net deals (with expense deductions)
  *   - door deals
  *   - recoups (those flow separately through the settlement record)
- *   - tier ratchets (would need vs-deal support first)
- *   - comps that count toward gross
+ *   - tier ratchets (the % engine can't accommodate a ratcheting structure)
+ *   - comps that count toward gross (countsTowardGross flag is ignored)
  *
  * For unsupported deals, the tool returns { supported: false } and the UI
- * shows the "this deal type isn't yet supported" empty state. About 82% of
- * Greenroom's customers default to spreadsheets because of this.
+ * shows the "this deal type isn't yet supported" empty state.
  */
 
 import type { Deal, Expense, TicketSale, Bonus } from "@/db/schema";
@@ -163,6 +158,126 @@ export function calculateSettlement(input: CalcInput): SettlementCalculation {
       finalFormula: bonusResult.applied.length
         ? `gross × ${deal.percentage} + bonuses = ${(payout + bonusResult.totalApplied).toFixed(2)}`
         : `gross × ${deal.percentage} = ${payout.toFixed(2)}`,
+      bonusesApplied: bonusResult.applied,
+      bonusesNotTriggered: bonusResult.notTriggered,
+    };
+  }
+
+  // ---------- percentage of net ----------
+  if (deal.dealType === "percentage_of_net") {
+    if (deal.percentage == null) {
+      return {
+        supported: false,
+        reason: "Percentage-of-net deal is missing a percentage.",
+        dealType: deal.dealType,
+      };
+    }
+    const netAfterExpenses = netBoxOffice - totalExpenses;
+    const payout = Math.max(0, netAfterExpenses) * deal.percentage;
+    const bonusResult = applyBonuses(parseBonuses(deal), {
+      gross: grossBoxOffice,
+      tickets,
+      capacity: venueCapacity,
+    });
+
+    return {
+      supported: true,
+      grossBoxOffice,
+      netBoxOffice,
+      totalExpenses,
+      totalToArtist: payout + bonusResult.totalApplied,
+      steps: [
+        {
+          label: "Net after expenses",
+          value: netAfterExpenses,
+          note: "Net box office − passed-through expenses — this is the base for the artist's %.",
+        },
+        {
+          label: `× ${(deal.percentage * 100).toFixed(0)}% of net`,
+          value: payout,
+          note: "Artist's percentage applied after all venue expenses are deducted.",
+        },
+        ...bonusResult.applied.map((b) => ({
+          label: b.label,
+          value: b.amount,
+          note: b.reason,
+        })),
+      ],
+      finalFormula: bonusResult.applied.length
+        ? `net ${netAfterExpenses.toFixed(2)} × ${deal.percentage} + bonuses = ${(payout + bonusResult.totalApplied).toFixed(2)}`
+        : `net ${netAfterExpenses.toFixed(2)} × ${deal.percentage} = ${payout.toFixed(2)}`,
+      bonusesApplied: bonusResult.applied,
+      bonusesNotTriggered: bonusResult.notTriggered,
+    };
+  }
+
+  // ---------- vs (guarantee vs % of net, whichever is greater) ----------
+  if (deal.dealType === "vs") {
+    if (deal.guaranteeAmount == null || deal.percentage == null) {
+      return {
+        supported: false,
+        reason:
+          "Vs deal requires both a guarantee amount and a percentage — one or both are missing.",
+        dealType: deal.dealType,
+      };
+    }
+    const netAfterExpenses = netBoxOffice - totalExpenses;
+    const percentagePath = Math.max(0, netAfterExpenses) * deal.percentage;
+    const winner: "guarantee" | "percentage" =
+      percentagePath > deal.guaranteeAmount ? "percentage" : "guarantee";
+    const baseAmount = Math.max(deal.guaranteeAmount, percentagePath);
+    const bonusResult = applyBonuses(parseBonuses(deal), {
+      gross: grossBoxOffice,
+      tickets,
+      capacity: venueCapacity,
+    });
+
+    return {
+      supported: true,
+      grossBoxOffice,
+      netBoxOffice,
+      totalExpenses,
+      totalToArtist: baseAmount + bonusResult.totalApplied,
+      steps: [
+        {
+          label: "Net after expenses",
+          value: netAfterExpenses,
+          note: "Net box office − passed-through expenses — base for the percentage path.",
+        },
+        {
+          label: "Guarantee floor",
+          value: deal.guaranteeAmount,
+          note:
+            winner === "guarantee"
+              ? "✓ Guarantee applies — % of net came in below the floor."
+              : "% of net exceeds the guarantee — guarantee not needed.",
+        },
+        {
+          label: `${(deal.percentage * 100).toFixed(0)}% of net`,
+          value: percentagePath,
+          note:
+            winner === "percentage"
+              ? "✓ % of net applies — exceeds the guarantee floor."
+              : "% of net came in below the guarantee floor.",
+        },
+        {
+          label:
+            winner === "percentage"
+              ? "Vs result — % of net applies"
+              : "Vs result — guarantee applies",
+          value: baseAmount,
+          note: `max(${deal.guaranteeAmount.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 })}, ${percentagePath.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 })})`,
+        },
+        ...bonusResult.applied.map((b) => ({
+          label: b.label,
+          value: b.amount,
+          note: b.reason,
+        })),
+      ],
+      finalFormula:
+        winner === "percentage"
+          ? `${deal.percentage} × net ${netAfterExpenses.toFixed(2)} = ${percentagePath.toFixed(2)} > guarantee → % wins`
+          : `guarantee ${deal.guaranteeAmount} > ${deal.percentage} × net ${netAfterExpenses.toFixed(2)} → guarantee holds`,
       bonusesApplied: bonusResult.applied,
       bonusesNotTriggered: bonusResult.notTriggered,
     };

@@ -77,6 +77,10 @@ export default async function SettlePage({
   const disputedRecoups = recoups.filter((r) => r.status === "disputed");
   const isDisputed = settlement?.status === "disputed" || settlement?.status === "revised" || !!settlement?.disputedAt;
   const disputedRecoupValue = disputedRecoups.reduce((s, r) => s + r.amount, 0);
+  // Data integrity flag: a settlement shouldn't reach paid/finalized with unresolved disputed recoups.
+  const hasFinalizedWithDisputedRecoups =
+    (settlement?.status === "paid" || settlement?.status === "finalized") &&
+    disputedRecoups.length > 0;
 
   return (
     <div className={`px-12 py-10 max-w-7xl ${isDisputed ? "bg-gradient-to-b from-rose-50/30 via-canvas to-canvas" : ""}`}>
@@ -117,6 +121,21 @@ export default async function SettlePage({
             </div>
             <p className="text-[12.5px] text-ink-600 mt-1 leading-relaxed">
               The artist team has flagged recoup line items. This settlement cannot be finalized until the dispute is resolved.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Data integrity flag: paid/finalized but recoups never resolved */}
+      {hasFinalizedWithDisputedRecoups && (
+        <div className="mb-8 rounded-lg border border-amber-200/60 bg-amber-50/40 p-5 flex gap-3">
+          <AlertTriangle className="h-4 w-4 text-amber-700 mt-0.5 shrink-0" />
+          <div>
+            <div className="text-[13px] font-semibold text-amber-800">
+              Data integrity issue · settlement marked paid with {disputedRecoups.length} unresolved recoup dispute{disputedRecoups.length === 1 ? "" : "s"}
+            </div>
+            <p className="text-[12.5px] text-ink-600 mt-1 leading-relaxed">
+              This settlement reached <span className="font-medium">{settlement?.status}</span> status, but {formatMoney(disputedRecoupValue)} in recoups were never formally resolved. The dispute was likely settled by phone or email — the system has no record of it.
             </p>
           </div>
         </div>
