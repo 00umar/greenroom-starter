@@ -17,6 +17,30 @@ The CEO memo frames this correctly: settlement is trust-critical. Every spreadsh
 
 ---
 
+## Why This Slice
+
+Settlement isn't one problem. The starter repo surfaces at least four distinct problems, each of which could anchor a slice:
+
+**1. The calculator can't handle most deal types.** 63% of deals return "unsupported." Mariana does the math in a spreadsheet and pastes the result back in. The data to run the calculation exists in the system — the engine just doesn't know what to do with it.
+
+**2. The structured fields don't reflect what was actually negotiated.** Mariana enters deals as prose because the form fields don't model the nuance. The freetext is the truth; the structured fields are an approximation. This creates a silent drift problem where the calculator runs on wrong inputs.
+
+**3. The artist team can't see the math behind the number.** Diego (tour manager) signs under load-out pressure because he can't trace the numbers back. Sarah Kim (WME) wants to review before Diego is in the room. There's no shared view, no transparency layer, no paper trail that travels with the settlement.
+
+**4. Disputes resolve off-system.** The Coastal Spell thread shows a $720 concession made over email. The system has no record of how it was resolved. This creates a data integrity gap that compounds over time.
+
+I chose slice 1 — the calculator — for three reasons:
+
+First, it's the structural unblock. Slices 2, 3, and 4 all assume correct numbers exist. A shared agent view of a wrong settlement number is worse than no shared view. A dispute resolution flow upstream of a calculation error doesn't fix the calculation. The calculator is the foundation everything else depends on.
+
+Second, the data is already there. Ticket sales, expenses, deal terms — all in the system, all queryable. This isn't a data collection problem or a behavioral problem. It's a missing formula. The fix is contained and the impact is immediate: one PR moves coverage from 37% to 94%.
+
+Third, it's the trust-critical moment. Pri's memo is right that settlement is where craft matters most. When Mariana hands Diego a number at 2am, that number needs to be traceable. A worksheet he can read is the foundation of trust. Everything else — shared links, advance confirmation, dispute flows — is built on top of a number both sides believe.
+
+Slice 2 (freetext sync) became the AI audit card — a secondary feature that catches structured field drift without requiring a form redesign. Slices 3 and 4 are "What's Next."
+
+---
+
 ## Why Vs Deals First
 
 Of the 537 deals in the database: 188 are vs, 119 are percentage-of-net, 30 are door, and the remaining 200 are already handled. Vs deals are 35% of all deals and the single largest unsupported category. Percentage-of-net comes second.

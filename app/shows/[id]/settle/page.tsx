@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/card";
 import { StatusBadge, DealTypeBadge, PlainBadge } from "@/components/ui/badge";
 import { calculateSettlement } from "@/lib/dealMath";
+import { extractDealTerms, type ExtractionResult } from "@/lib/extractDealTerms";
 import {
   formatMoney,
   formatShowDateFull,
@@ -68,6 +69,10 @@ export default async function SettlePage({
     expenses,
     venueCapacity: data.venue?.capacity ?? undefined,
   });
+
+  const extraction: ExtractionResult | null = deal.dealNotesFreetext
+    ? await extractDealTerms(deal.dealNotesFreetext, deal)
+    : null;
   const grossSoFar = ticketSales.reduce((sum, t) => sum + t.gross, 0);
   const totalFees = ticketSales.reduce((sum, t) => sum + t.fees, 0);
   const totalExpenses = expenses
@@ -160,6 +165,8 @@ export default async function SettlePage({
         ) : (
           <SupportedSettlement calc={calc} existingSettlement={settlement} />
         )}
+
+        {extraction && <DealTermsAuditCard result={extraction} freetext={deal.dealNotesFreetext!} />}
 
         {recoups.length > 0 && <RecoupsSection recoups={recoups} />}
 
@@ -704,6 +711,91 @@ function SignoffSection({ settlement }: { settlement: Settlement }) {
             </div>
           </div>
         )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function DealTermsAuditCard({
+  result,
+  freetext,
+}: {
+  result: ExtractionResult;
+  freetext: string;
+}) {
+  if (!result.ok) return null;
+
+  const { terms, mismatches } = result;
+  const hasMismatches = mismatches.length > 0;
+
+  return (
+    <Card accent={hasMismatches ? "amber" : undefined}>
+      <CardHeader>
+        <div>
+          <CardTitle>AI deal-term audit</CardTitle>
+          <CardDescription>
+            Extracted from the free-text deal notes Mariana wrote at signing.
+            Mismatches mean the structured record and the agreed terms diverged.
+          </CardDescription>
+        </div>
+        <PlainBadge variant={terms.confidence === "high" ? "brand" : "default"}>
+          {terms.confidence} confidence
+        </PlainBadge>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {hasMismatches ? (
+          <div className="space-y-3">
+            {mismatches.map((m, i) => (
+              <div
+                key={i}
+                className="rounded-lg bg-amber-50/60 ring-1 ring-amber-200/60 p-4"
+              >
+                <div className="flex items-center gap-2 mb-1.5">
+                  <AlertTriangle className="h-3.5 w-3.5 text-amber-700 shrink-0" />
+                  <span className="text-[12.5px] font-semibold text-amber-800">
+                    {m.field} mismatch
+                  </span>
+                </div>
+                <div className="text-[12px] text-ink-700 grid grid-cols-2 gap-2 mb-2">
+                  <div>
+                    <span className="text-ink-400">Structured: </span>
+                    <span className="font-mono">{m.structured}</span>
+                  </div>
+                  <div>
+                    <span className="text-ink-400">From notes: </span>
+                    <span className="font-mono">{m.extracted}</span>
+                  </div>
+                </div>
+                <p className="text-[11.5px] text-ink-500 leading-relaxed">{m.note}</p>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 text-[13px] text-ink-600">
+            <Check className="h-4 w-4 text-emerald-600" />
+            Deal notes match the structured fields — no discrepancies found.
+          </div>
+        )}
+
+        {terms.bonusMentions.length > 0 && (
+          <div>
+            <div className="eyebrow text-[10px] text-ink-400 mb-2">Bonus mentions in notes</div>
+            <div className="space-y-1">
+              {terms.bonusMentions.map((b, i) => (
+                <div key={i} className="text-[12.5px] text-ink-600 bg-canvas-soft rounded px-3 py-1.5 ring-1 ring-ink-200/60">
+                  {b}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div>
+          <div className="eyebrow text-[10px] text-ink-400 mb-2">Raw deal notes</div>
+          <div className="text-[12px] text-ink-500 bg-canvas-soft rounded-lg p-4 ring-1 ring-ink-200/60 leading-relaxed italic">
+            {freetext}
+          </div>
+        </div>
       </CardContent>
     </Card>
   );
